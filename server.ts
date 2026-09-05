@@ -258,13 +258,6 @@ app.post("/api/leads/analyze", async (req, res) => {
       });
     }
 
-    if (!normalized.message) {
-      return res.status(400).json({
-        success: false,
-        error: "Field 'message' (or 'Description') is required and must describe the customer requirement.",
-      });
-    }
-
     // 3. Run analysis through the shared Gemini engine
     const analysisData = await analyzeLeadWithGemini({
       customerName: normalized.customer_name,
