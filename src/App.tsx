@@ -1,3 +1,5 @@
+import { signout } from 'firebase/auth';
+import { auth } from './firebase';
 import React, { useState, useRef, useEffect } from 'react';
 import { NavTab, LeadFormData, LeadAnalysisResult, LeadRecord, GeminiLeadResponse, StoredLead } from './types';
 import { Sidebar } from './components/Sidebar';
@@ -261,6 +263,14 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
+         <div className="flex justify-end px-4 pt-4 md:px-6">
+    <button
+      onClick={() => signOut(auth)}
+      className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-700"
+    >
+      Logout
+    </button>
+  </div>
         <Header
           activeTab={activeTab}
           onSelectPreset={handleSelectPreset}
