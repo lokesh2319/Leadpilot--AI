@@ -33,9 +33,9 @@ app.get("/api/health", (_req, res) => {
  * GET /api/leads
  * Returns all saved leads in newest-first order
  */
-app.get("/api/leads", (_req, res) => {
+app.get("/api/leads", async (_req, res) => {
   try {
-    const leads = getAllLeads();
+    const leads = await getAllLeads();
     return res.json({
       success: true,
       data: leads,
@@ -54,10 +54,10 @@ app.get("/api/leads", (_req, res) => {
  * GET /api/leads/:id
  * Returns a single saved lead by ID
  */
-app.get("/api/leads/:id", (req, res) => {
+app.get("/api/leads/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const lead = getLeadById(id);
+    const lead = await getLeadById(id);
     if (!lead) {
       return res.status(404).json({
         success: false,
@@ -81,10 +81,10 @@ app.get("/api/leads/:id", (req, res) => {
  * DELETE /api/leads/:id
  * Removes a lead from persistent storage
  */
-app.delete("/api/leads/:id", (req, res) => {
+app.delete("/api/leads/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const success = deleteLead(id);
+    const success = await deleteLead(id);
     if (!success) {
       return res.status(404).json({
         success: false,
@@ -257,7 +257,7 @@ app.post("/api/leads/analyze", async (req, res) => {
     });
 
     // 4. Save lead to persistent storage upon successful analysis
-    const savedLead = saveLead({
+    const savedLead = await saveLead({
       customer_name: normalized.customer_name,
       phone: normalized.phone,
       email: normalized.email,
@@ -347,7 +347,7 @@ app.post("/api/analyze-lead", async (req, res) => {
     });
 
     // Save lead to persistent storage upon successful analysis
-    const savedLead = saveLead({
+    const savedLead = await saveLead({
       customer_name: normalized.customer_name,
       phone: normalized.phone,
       email: normalized.email,

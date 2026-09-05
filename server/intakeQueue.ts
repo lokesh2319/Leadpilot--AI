@@ -114,7 +114,7 @@ async function processNextTask() {
     );
 
     // Save lead to persistent database
-    const savedLead = saveLead({
+    const savedLead = await saveLead({
       customer_name: normalized.customer_name,
       phone: normalized.phone,
       email: normalized.email,
