@@ -19,6 +19,18 @@ import {
 
 dotenv.config();
 
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+
+function verifyWebhookSecret(req: any): boolean {
+  const providedSecret = req.headers["x-leadpilot-secret"];
+
+  return Boolean(
+    WEBHOOK_SECRET &&
+    providedSecret &&
+    providedSecret === WEBHOOK_SECRET
+  );
+}
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;;
 
@@ -120,6 +132,14 @@ app.delete("/api/leads/:id", async (req, res) => {
  *    - processing_failed
  */
 app.post("/api/leads/intake", (req, res) => {
+  if (!verifyWebhookSecret(req)) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized webhook request.",
+    });
+
+  }
+
   const requestId = generateRequestId();
 
   try {
