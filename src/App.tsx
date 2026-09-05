@@ -1,4 +1,4 @@
-import { signout } from 'firebase/auth';
+import { signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import React, { useState, useRef, useEffect } from 'react';
 import { NavTab, LeadFormData, LeadAnalysisResult, LeadRecord, GeminiLeadResponse, StoredLead } from './types';
