@@ -1,0 +1,6 @@
+{
+  "name": "LeadPilot AI",
+  "description": "CRM lead qualification application for evaluating customer intent, lead scoring, and automated follow-up guidance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
