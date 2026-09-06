@@ -6,7 +6,6 @@ import {
   Download, 
   Sparkles, 
   Info,
-  CheckCircle2,
   Webhook,
   Send,
   Copy,
@@ -16,61 +15,83 @@ import {
   Code,
   Zap,
   Activity,
-  RefreshCw
+  RefreshCw,
+  Key,
+  Building2,
+  Lock,
+  CheckCircle2
 } from 'lucide-react';
 import { LeadRecord, StoredLead } from '../types';
+import { authFetch } from '../utils/authFetch';
 
 interface SettingsViewProps {
   leads: (StoredLead | LeadRecord)[];
 }
 
+interface WorkspaceInfo {
+  id: string;
+  name: string;
+  role: string;
+  plan: string;
+  monthlyLeadLimit: number;
+  status: string;
+}
+
+interface IntegrationInfo {
+  provider: string;
+  status: string;
+  secretPrefix: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+}
+
 const SAMPLE_PAYLOADS = {
-  rahul: {
-    name: "Native LeadPilot (customer_name, budget, message)",
-    json: JSON.stringify(
-      {
-        customer_name: "Rahul Sharma",
-        phone: "9876543210",
-        email: "rahul@example.com",
-        lead_source: "Website",
-        product_service: "CRM Automation",
-        budget: "100000",
-        message:
-          "We have 20 salespeople and want to implement a CRM within 30 days. Our budget is approved.",
-      },
-      null,
-      2
-    ),
-  },
   genericCrm: {
-    name: "Generic CRM Payload (Full_Name, Annual_Revenue, Description)",
+    name: "Generic CRM (Zoho / HubSpot: Full_Name, Annual_Revenue)",
     json: JSON.stringify(
       {
         Full_Name: "Vikram Malhotra",
         Phone: "9876543210",
         Email: "vikram@enterprise.co",
-        Lead_Source: "Website",
-        Product: "CRM Automation",
-        Annual_Revenue: "100000",
+        Lead_Source: "Zoho CRM Inbound",
+        Product: "Enterprise CRM Automation",
+        Annual_Revenue: "150000",
         Description:
-          "We have 20 salespeople and want to implement a CRM within 30 days. Our budget is approved.",
+          "We have 25 sales reps and need automated qualification before assigning them to account executives.",
       },
       null,
       2
     ),
   },
-  starter: {
-    name: "Early Research (Cold / No Budget)",
+  native: {
+    name: "Native LeadPilot (customer_name, budget, message)",
     json: JSON.stringify(
       {
-        customer_name: "Sarah Jenkins",
+        customer_name: "Sarah Connor",
         phone: "+1 415 555 0192",
-        email: "sarah@independentdesign.co",
-        lead_source: "Google Search",
-        product_service: "CRM Automation",
-        budget: "Under 5000",
+        email: "sarah@skynet-resistance.org",
+        lead_source: "Partner Referral",
+        product_service: "Security Automation",
+        budget: "85000",
         message:
-          "Just looking around at options for next year. No budget allocated yet.",
+          "Immediate requirement for AI lead scoring pipeline. Budget approved for Q3 rollout.",
+      },
+      null,
+      2
+    ),
+  },
+  cold: {
+    name: "Early Research (Cold / Low Budget)",
+    json: JSON.stringify(
+      {
+        customer_name: "David Kim",
+        phone: "+1 415 555 9922",
+        email: "david@smallagency.io",
+        lead_source: "Google Search",
+        product_service: "Basic CRM",
+        budget: "Under 5000",
+        message: "Just researching options for next year. No budget allocated yet.",
       },
       null,
       2
@@ -86,7 +107,7 @@ const SAMPLE_PAYLOADS = {
         lead_source: "Website",
         product_service: "CRM Automation",
         budget: "50000",
-        message: "Testing validation response.",
+        message: "Testing validation error response.",
       },
       null,
       2
@@ -97,21 +118,55 @@ const SAMPLE_PAYLOADS = {
 export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
   const [selectedEndpoint, setSelectedEndpoint] = useState<'/api/leads/intake' | '/api/leads/analyze'>('/api/leads/intake');
   const [testPayload, setTestPayload] = useState<string>(SAMPLE_PAYLOADS.genericCrm.json);
+  const [testSecret, setTestSecret] = useState<string>('');
   const [isSending, setIsSending] = useState<boolean>(false);
   const [responseStatus, setResponseStatus] = useState<number | null>(null);
   const [responseBody, setResponseBody] = useState<string | null>(null);
   const [responseTime, setResponseTime] = useState<number | null>(null);
   const [copiedCurl, setCopiedCurl] = useState<boolean>(false);
   const [copiedResponse, setCopiedResponse] = useState<boolean>(false);
-  
+  const [copiedSecret, setCopiedSecret] = useState<boolean>(false);
+  const [copiedWebhookUrl, setCopiedWebhookUrl] = useState<boolean>(false);
+
+  // Workspace & Integration State
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [integration, setIntegration] = useState<IntegrationInfo | null>(null);
+  const [newlyGeneratedSecret, setNewlyGeneratedSecret] = useState<string | null>(null);
+  const [isRotatingSecret, setIsRotatingSecret] = useState<boolean>(false);
+  const [secretActionError, setSecretActionError] = useState<string | null>(null);
+
   // Intake Traces State
   const [intakeLogs, setIntakeLogs] = useState<any[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState<boolean>(false);
 
+  const webhookUrl = `${window.location.origin}/api/leads/intake`;
+
+  const fetchWorkspaceAndIntegration = async () => {
+    try {
+      const meRes = await authFetch('/api/me');
+      if (meRes.ok) {
+        const meJson = await meRes.json();
+        if (meJson.success && meJson.workspace) {
+          setWorkspace(meJson.workspace);
+        }
+      }
+
+      const intRes = await authFetch('/api/workspace/integration/zoho');
+      if (intRes.ok) {
+        const intJson = await intRes.json();
+        if (intJson.success) {
+          setIntegration(intJson.integration);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load workspace or integration info:', e);
+    }
+  };
+
   const fetchIntakeLogs = async () => {
     try {
       setIsLoadingLogs(true);
-      const res = await fetch('/api/leads/intake/logs');
+      const res = await authFetch('/api/leads/intake/logs');
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.logs)) {
@@ -126,14 +181,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
   };
 
   useEffect(() => {
+    fetchWorkspaceAndIntegration();
     fetchIntakeLogs();
   }, []);
 
+  const handleRotateSecret = async () => {
+    const confirmed = window.confirm(
+      'Are you sure you want to generate / rotate your Zoho CRM Webhook Secret? Any previous secret will be immediately revoked.'
+    );
+    if (!confirmed) return;
+
+    try {
+      setIsRotatingSecret(true);
+      setSecretActionError(null);
+      const res = await authFetch('/api/workspace/integration/zoho/rotate', {
+        method: 'POST',
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to rotate secret.');
+      }
+
+      setNewlyGeneratedSecret(data.secret);
+      setTestSecret(data.secret);
+      await fetchWorkspaceAndIntegration();
+    } catch (err: any) {
+      setSecretActionError(err?.message || 'Error generating webhook secret.');
+    } finally {
+      setIsRotatingSecret(false);
+    }
+  };
+
   const exportData = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(leads, null, 2));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(leads, null, 2));
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `leadpilot-leads-${new Date().toISOString().slice(0,10)}.json`);
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `leadpilot-leads-${new Date().toISOString().slice(0, 10)}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -166,13 +250,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
         return;
       }
 
-      const res = await fetch(selectedEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(parsedBody),
-      });
+      let res: Response;
+
+      if (selectedEndpoint === '/api/leads/intake') {
+        // Direct webhook intake requires x-leadpilot-secret header
+        const secretHeader = testSecret || newlyGeneratedSecret || 'paste_your_secret_here';
+        res = await fetch('/api/leads/intake', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-leadpilot-secret': secretHeader,
+          },
+          body: JSON.stringify(parsedBody),
+        });
+      } else {
+        // Interactive analysis uses authenticated session
+        res = await authFetch('/api/leads/analyze', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(parsedBody),
+        });
+      }
 
       const elapsed = Math.round(performance.now() - startTime);
       setResponseTime(elapsed);
@@ -206,9 +306,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
   };
 
   const handleCopyCurl = () => {
-    const curlCommand = `curl -X POST "${window.location.origin}${selectedEndpoint}" \\
+    const activeSecret = testSecret || newlyGeneratedSecret || '<YOUR_WORKSPACE_SECRET>';
+    let curlCommand = '';
+
+    if (selectedEndpoint === '/api/leads/intake') {
+      curlCommand = `curl -X POST "${webhookUrl}" \\
   -H "Content-Type: application/json" \\
+  -H "x-leadpilot-secret: ${activeSecret}" \\
   -d '${testPayload.replace(/'/g, "'\\''")}'`;
+    } else {
+      curlCommand = `curl -X POST "${window.location.origin}/api/leads/analyze" \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <FIREBASE_ID_TOKEN>" \\
+  -d '${testPayload.replace(/'/g, "'\\''")}'`;
+    }
 
     navigator.clipboard.writeText(curlCommand);
     setCopiedCurl(true);
@@ -224,7 +335,159 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-5xl">
+      {/* Workspace Overview & Identity Card */}
+      {workspace && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-800">{workspace.name}</h3>
+                <span className="text-[10px] font-semibold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                  {workspace.plan} Tier
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Workspace ID: <code className="font-mono text-slate-700 bg-slate-100 px-1 py-0.5 rounded">{workspace.id}</code> · Role: <span className="font-medium text-slate-700 capitalize">{workspace.role}</span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-xs">
+            <div className="text-right">
+              <span className="text-slate-500 block">Monthly Quota</span>
+              <span className="font-bold text-slate-800 font-mono">{workspace.monthlyLeadLimit.toLocaleString()} leads/mo</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Zoho CRM Multi-Tenant Webhook Management */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 text-blue-600" />
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">Zoho CRM Multi-Tenant Webhook Integration</h3>
+              <p className="text-xs text-slate-500">Each organization possesses a unique cryptographically hashed webhook secret.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {integration?.status === 'active' ? (
+              <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded border border-emerald-200">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Active Credentials
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded border border-amber-200">
+                <AlertCircle className="w-3 h-3 text-amber-600" /> No Active Secret
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 space-y-4 text-xs">
+          {/* Webhook Intake URL */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 block">
+              Inbound Webhook URL (Zoho CRM Webhook Destination):
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={webhookUrl}
+                className="w-full p-2.5 font-mono text-xs bg-slate-50 text-slate-800 rounded-lg border border-slate-200"
+              />
+              <button
+                type="button"
+                id="btn-copy-webhook-url"
+                onClick={() => {
+                  navigator.clipboard.writeText(webhookUrl);
+                  setCopiedWebhookUrl(true);
+                  setTimeout(() => setCopiedWebhookUrl(false), 2000);
+                }}
+                className="inline-flex items-center gap-1 px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium cursor-pointer border border-slate-300 shrink-0"
+              >
+                {copiedWebhookUrl ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedWebhookUrl ? 'Copied' : 'Copy'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Newly Generated Secret Alert */}
+          {newlyGeneratedSecret && (
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-bold text-emerald-900">
+                  <Lock className="w-4 h-4 text-emerald-600" />
+                  <span>New Webhook Secret Generated (Copy Now)</span>
+                </div>
+                <button
+                  type="button"
+                  id="btn-copy-generated-secret"
+                  onClick={() => {
+                    navigator.clipboard.writeText(newlyGeneratedSecret);
+                    setCopiedSecret(true);
+                    setTimeout(() => setCopiedSecret(false), 2000);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold cursor-pointer"
+                >
+                  {copiedSecret ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedSecret ? 'Copied!' : 'Copy Secret'}</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
+                This token is shown only once. LeadPilot stores an irreversible SHA-256 hash. Configure your Zoho CRM Webhook header:
+                <code className="font-mono font-bold ml-1 bg-emerald-100 px-1 py-0.5 rounded">x-leadpilot-secret</code>
+              </p>
+              <pre className="p-2.5 bg-white text-slate-900 font-mono text-xs rounded border border-emerald-200 select-all overflow-x-auto">
+                {newlyGeneratedSecret}
+              </pre>
+            </div>
+          )}
+
+          {secretActionError && (
+            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+              {secretActionError}
+            </div>
+          )}
+
+          {/* Secret Management Action */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+            <div>
+              <span className="font-semibold text-slate-800 block">
+                Active Secret Prefix: {integration?.secretPrefix ? <code className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">{integration.secretPrefix}...</code> : 'None'}
+              </span>
+              <span className="text-[11px] text-slate-500">
+                {integration?.updatedAt ? `Last rotated: ${new Date(integration.updatedAt).toLocaleDateString()}` : 'Generate a secret to connect Zoho CRM.'}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              id="btn-rotate-secret"
+              onClick={handleRotateSecret}
+              disabled={isRotatingSecret}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white rounded-lg text-xs font-semibold shadow-2xs transition-all cursor-pointer shrink-0"
+            >
+              {isRotatingSecret ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3 h-3" />
+                  <span>{integration?.secretPrefix ? 'Rotate Webhook Secret' : 'Generate Webhook Secret'}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Developer API & Webhook Test Console */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
         <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -240,7 +503,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
               <Sparkles className="w-3 h-3 text-blue-600" /> Fast Intake Ready
             </span>
             <span className="inline-flex items-center text-[11px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded border border-emerald-200">
-              Zoho / HubSpot / Zapier
+              Zoho CRM Verified
             </span>
           </div>
         </div>
@@ -285,6 +548,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
               </button>
             </div>
           </div>
+
+          {/* Test Secret Input (Only for Intake endpoint) */}
+          {selectedEndpoint === '/api/leads/intake' && (
+            <div className="space-y-1.5">
+              <label htmlFor="test-webhook-secret" className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-slate-500" />
+                <span>Test Webhook Secret (<code className="font-mono text-blue-600">x-leadpilot-secret</code>):</span>
+              </label>
+              <input
+                id="test-webhook-secret"
+                type="text"
+                placeholder={newlyGeneratedSecret || "Enter your workspace webhook secret or click 'Generate Webhook Secret' above"}
+                value={testSecret}
+                onChange={(e) => setTestSecret(e.target.value)}
+                className="w-full p-2.5 font-mono text-xs bg-white text-slate-800 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
 
           {/* Preset Buttons */}
           <div className="flex flex-wrap items-center gap-2">
@@ -425,7 +706,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
                 <Activity className="w-3.5 h-3.5 text-indigo-600" />
                 <h4 className="text-xs font-bold text-slate-800">Recent Webhook Intake Traces</h4>
                 <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-200">
-                  Live Audit Trail
+                  Workspace Audit Trail
                 </span>
               </div>
               <button
@@ -442,7 +723,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
 
             {intakeLogs.length === 0 ? (
               <div className="p-4 rounded-lg bg-slate-50 text-center border border-slate-200 text-slate-500 text-xs">
-                No webhook intake events recorded yet. Send a test webhook to /api/leads/intake to see live lifecycle traces.
+                No webhook intake events recorded for this workspace yet. Send a test webhook with your secret to see live lifecycle traces.
               </div>
             ) : (
               <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
@@ -479,35 +760,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
                 })}
               </div>
             )}
-          </div>
-
-          {/* Contract Documentation */}
-          <div className="bg-slate-50 rounded-lg p-4 border border-slate-200/80 text-xs space-y-2">
-            <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
-              <Info className="w-3.5 h-3.5 text-blue-600" />
-              <span>CRM Intake API Specifications</span>
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-[11px] text-slate-600">
-              <div>
-                <span className="font-semibold text-slate-800 block mb-1">CRM Mappings & Normalization:</span>
-                <ul className="list-disc list-inside space-y-0.5">
-                  <li><code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">Full_Name</code> → customer_name</li>
-                  <li><code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">Email</code> → email (validated format)</li>
-                  <li><code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">Description</code> → message</li>
-                  <li><code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">Phone</code> → phone</li>
-                  <li><code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">Annual_Revenue</code> → budget</li>
-                </ul>
-              </div>
-              <div>
-                <span className="font-semibold text-slate-800 block mb-1">Intake Execution Lifecycle:</span>
-                <ul className="list-disc list-inside space-y-0.5">
-                  <li><strong>HTTP 200 immediate</strong> acknowledgment response</li>
-                  <li>Non-blocking background queue for Gemini qualification</li>
-                  <li>Full trace logging with unique <code className="bg-slate-200/70 px-1 py-0.5 rounded font-mono text-slate-800">request_id</code></li>
-                  <li>Persistent storage in SQLite database</li>
-                </ul>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -595,7 +847,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
             <span>Secure Architecture & Export</span>
           </h3>
           <p className="text-xs text-slate-500 mt-1 max-w-lg">
-            All lead scores are computed server-side via Google Gemini models without exposing credentials. Export your local session pipeline at any time.
+            All lead scores are computed server-side via Google Gemini models without exposing credentials. Export your workspace leads pipeline at any time.
           </p>
         </div>
 
@@ -606,10 +858,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
           className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-all cursor-pointer shrink-0"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Export Session Leads (JSON)</span>
+          <span>Export Workspace Leads (JSON)</span>
         </button>
       </div>
     </div>
   );
 };
-

@@ -1,24 +1,7 @@
+import React, { useState, useRef, useEffect } from 'react';
 import { signOut } from 'firebase/auth';
 import { auth } from './firebase';
-async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-  const user = auth.currentUser;
-
-  if (!user) {
-    throw new Error('User is not authenticated');
-  }
-
-  const token = await user.getIdToken();
-
-  return fetch(input, {
-    ...init,
-    headers: {
-      ...(init.headers || {}),
-      Authorization: `Bearer ${token}`,
-    },
-  });
-}
-
-import React, { useState, useRef, useEffect } from 'react';
+import { authFetch } from './utils/authFetch';
 import { NavTab, LeadFormData, LeadAnalysisResult, LeadRecord, GeminiLeadResponse, StoredLead } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
