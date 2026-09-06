@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendEmailVerification,
+  signOut,
 } from 'firebase/auth';
 import { auth } from './firebase';
 
@@ -19,10 +21,22 @@ export default function AuthPage() {
 
     try {
       if (mode === 'signup') {
-        await createUserWithEmailAndPassword(auth, email, password);
+         const result = await createUserWithEmailAndPassword(auth, email, password);
+
+	 await sendEmailVerification(result.user);
+
+	 await signOut(auth);
+
+	 setError('Verification email sent. Please verify your email, then sign in.');
+	 setMode('login');
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+	const result = await signInWithEmailAndPassword(auth, email, password);
+	
+	if (!result.user.emailVerified) {
+	  await signOut(auth);
+	  throw new Error('Please verify your email before signing in.');
       }
+     }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
     } finally {
