@@ -1,4 +1,5 @@
 import { getAuth } from "firebase-admin/auth";
+import { getApps, initializeApp } from "firebase-admin/app";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -19,6 +20,7 @@ import {
 } from "./server/intakeQueue.js";
 
 dotenv.config();
+const authAdminApp = getApps().find(app => app.name === "authVerifier") || initializeApp({ projectId: "webhook-4dd1d" }, "authVerifier");
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
@@ -49,7 +51,7 @@ async function verifyFirebaseToken(req: any, res: any, next: any) {
 
     const token = authHeader.substring(7);
 
-    const decodedToken = await getAuth().verifyIdToken(token);
+    const decodedToken = await getAuth(authAdminApp).verifyIdToken(token);
 
     req.user = decodedToken;
     next();
