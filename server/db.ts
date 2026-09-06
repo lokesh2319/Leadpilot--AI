@@ -26,11 +26,10 @@ export type NewLeadInput = Omit<StoredLead, 'id' | 'created_at'> & {
   created_at?: string;
 };
 
-if (getApps().length === 0) {
-  initializeApp();
-}
-
-const db = getFirestore();
+const app = getApps().length === 0
+  ? initializeApp()
+  : getApps()[0];
+const db = getFirestore(app, 'webhook');
 const leadsCollection = db.collection('leads');
 
 /**
