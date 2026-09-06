@@ -1,5 +1,10 @@
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import {
+  getLocalLeads,
+  saveLocalLead,
+  deleteLocalLead,
+} from './localStore.js';
 
 export interface StoredLead {
   id: string;
@@ -36,6 +41,19 @@ export const defaultAdminApp =
 
 export const db = getFirestore(defaultAdminApp, 'webhook');
 
+function isFirestorePermissionError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  return (
+    err.code === 7 ||
+    err.code === 'PERMISSION_DENIED' ||
+    msg.includes('PERMISSION_DENIED') ||
+    msg.includes('Missing or insufficient permissions') ||
+    msg.includes('NOT_FOUND') ||
+    err.code === 5
+  );
+}
+
 /**
  * Returns collection reference for a workspace's leads:
  * /companies/{workspaceId}/leads
@@ -51,29 +69,50 @@ export function getLeadsCollection(workspaceId?: string) {
  * Returns all saved leads for a specific workspace in newest-first order.
  */
 export async function getAllLeads(workspaceId?: string): Promise<StoredLead[]> {
-  const collection = getLeadsCollection(workspaceId);
-  const snapshot = await collection.orderBy('created_at', 'desc').get();
+  const ws = workspaceId || 'default';
+  try {
+    const collection = getLeadsCollection(workspaceId);
+    const snapshot = await collection.orderBy('created_at', 'desc').get();
 
-  return snapshot.docs.map((doc) => ({
-    ...(doc.data() as StoredLead),
-    id: doc.id,
-    workspaceId: workspaceId || (doc.data() as any).workspaceId || 'legacy',
-  }));
+    return snapshot.docs.map((doc) => ({
+      ...(doc.data() as StoredLead),
+      id: doc.id,
+      workspaceId: ws,
+    }));
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      return getLocalLeads(ws);
+    }
+    console.error('Error fetching leads from Firestore:', err?.message || err);
+    return getLocalLeads(ws);
+  }
 }
 
 /**
  * Returns one lead by ID within a workspace.
  */
 export async function getLeadById(workspaceId: string | undefined, id: string): Promise<StoredLead | null> {
-  const doc = await getLeadsCollection(workspaceId).doc(id).get();
-  if (!doc.exists) {
-    return null;
+  const ws = workspaceId || 'default';
+  try {
+    const doc = await getLeadsCollection(workspaceId).doc(id).get();
+    if (!doc.exists) {
+      const local = getLocalLeads(ws).find((l) => l.id === id);
+      return local || null;
+    }
+    return {
+      ...(doc.data() as StoredLead),
+      id: doc.id,
+      workspaceId: ws,
+    };
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      const local = getLocalLeads(ws).find((l) => l.id === id);
+      return local || null;
+    }
+    console.error('Error in getLeadById:', err?.message || err);
+    const local = getLocalLeads(ws).find((l) => l.id === id);
+    return local || null;
   }
-  return {
-    ...(doc.data() as StoredLead),
-    id: doc.id,
-    workspaceId: workspaceId || (doc.data() as any).workspaceId || 'legacy',
-  };
 }
 
 /**
@@ -121,7 +160,21 @@ export async function saveLead(
     created_at,
   };
 
-  await getLeadsCollection(workspaceId).doc(id).set(newLead);
+  try {
+    await getLeadsCollection(workspaceId).doc(id).set(newLead);
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      return saveLocalLead(workspaceId, newLead);
+    }
+    console.error('Error saving lead to Firestore, saving locally:', err?.message || err);
+    return saveLocalLead(workspaceId, newLead);
+  }
+
+  // Also sync locally as cache
+  try {
+    saveLocalLead(workspaceId, newLead);
+  } catch {}
+
   return newLead;
 }
 
@@ -129,11 +182,21 @@ export async function saveLead(
  * Deletes a lead by ID from a workspace.
  */
 export async function deleteLead(workspaceId: string | undefined, id: string): Promise<boolean> {
-  const ref = getLeadsCollection(workspaceId).doc(id);
-  const doc = await ref.get();
-  if (!doc.exists) {
-    return false;
+  const ws = workspaceId || 'default';
+  try {
+    const ref = getLeadsCollection(workspaceId).doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return deleteLocalLead(ws, id);
+    }
+    await ref.delete();
+    deleteLocalLead(ws, id);
+    return true;
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      return deleteLocalLead(ws, id);
+    }
+    console.error('Error deleting lead from Firestore, deleting locally:', err?.message || err);
+    return deleteLocalLead(ws, id);
   }
-  await ref.delete();
-  return true;
 }

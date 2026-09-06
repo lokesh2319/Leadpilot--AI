@@ -22,6 +22,19 @@ export interface AuditLogEntry {
   metadata?: Record<string, any>;
 }
 
+function isFirestorePermissionError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  return (
+    err.code === 7 ||
+    err.code === 'PERMISSION_DENIED' ||
+    msg.includes('PERMISSION_DENIED') ||
+    msg.includes('Missing or insufficient permissions') ||
+    msg.includes('NOT_FOUND') ||
+    err.code === 5
+  );
+}
+
 // In-memory cache for ultra-fast UI updates per workspace
 const MAX_MEM_LOGS = 100;
 const memLogsByWorkspace = new Map<string, AuditLogEntry[]>();
@@ -75,7 +88,9 @@ export async function logAuditTrace(
       .doc(entry.id)
       .set(entry)
       .catch((err) => {
-        console.error('Failed to persist audit log to Firestore:', err?.message || err);
+        if (!isFirestorePermissionError(err)) {
+          console.error('Failed to persist audit log to Firestore:', err?.message || err);
+        }
       });
   }
 
@@ -107,8 +122,10 @@ export async function getWorkspaceAuditLogs(
         return fromDb;
       }
     }
-  } catch (err) {
-    console.error('Failed to read audit logs from Firestore:', err);
+  } catch (err: any) {
+    if (!isFirestorePermissionError(err)) {
+      console.error('Failed to read audit logs from Firestore:', err?.message || err);
+    }
   }
 
   const cached = memLogsByWorkspace.get(wsId) || [];

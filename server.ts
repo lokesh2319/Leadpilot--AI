@@ -41,6 +41,9 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+// Enable trust proxy for Cloud Run and reverse proxies (resolves express-rate-limit X-Forwarded-For warning)
+app.set("trust proxy", 1);
+
 // Security Headers: Helmet with relaxed CSP for local/embedded preview iframe
 app.use(
   helmet({
@@ -66,6 +69,10 @@ const generalApiLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: {
+    xForwardedForHeader: false,
+    default: true,
+  },
   message: {
     success: false,
     error: "Too many requests. Please slow down.",
@@ -77,6 +84,10 @@ const webhookIntakeLimiter = rateLimit({
   max: 180,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: {
+    xForwardedForHeader: false,
+    default: true,
+  },
   message: {
     success: false,
     accepted: false,
@@ -89,6 +100,10 @@ const secretRotationLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: {
+    xForwardedForHeader: false,
+    default: true,
+  },
   message: {
     success: false,
     error: "Too many secret rotation requests. Please try again later.",

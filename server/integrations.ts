@@ -1,5 +1,10 @@
 import { db } from './db.js';
 import crypto from 'crypto';
+import {
+  createLocalIntegrationSecret,
+  getLocalIntegration,
+  resolveLocalWebhookSecret,
+} from './localStore.js';
 
 export interface IntegrationDoc {
   id: string; // e.g. 'zoho'
@@ -17,6 +22,19 @@ export function hashSecret(secret: string): string {
   return crypto.createHash('sha256').update(secret.trim()).digest('hex');
 }
 
+function isFirestorePermissionError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  return (
+    err.code === 7 ||
+    err.code === 'PERMISSION_DENIED' ||
+    msg.includes('PERMISSION_DENIED') ||
+    msg.includes('Missing or insufficient permissions') ||
+    msg.includes('NOT_FOUND') ||
+    err.code === 5
+  );
+}
+
 /**
  * Rotates or generates a new integration secret for a workspace.
  * Returns the raw token ONCE so it can be shown to the user.
@@ -30,42 +48,55 @@ export async function createOrRotateIntegrationSecret(
   const secretHash = hashSecret(rawSecret);
   const prefix = `${rawSecret.substring(0, 14)}...`;
 
-  const integrationRef = db
-    .collection('companies')
-    .doc(workspaceId)
-    .collection('integrations')
-    .doc(provider);
+  try {
+    const integrationRef = db
+      .collection('companies')
+      .doc(workspaceId)
+      .collection('integrations')
+      .doc(provider);
 
-  // If previous integration exists, clean up old hash lookup
-  const prevSnap = await integrationRef.get();
-  if (prevSnap.exists) {
-    const prevData = prevSnap.data() as IntegrationDoc;
-    if (prevData?.secretHash) {
-      await db.collection('integrationSecrets').doc(prevData.secretHash).delete().catch(() => {});
+    // If previous integration exists, clean up old hash lookup
+    const prevSnap = await integrationRef.get();
+    if (prevSnap.exists) {
+      const prevData = prevSnap.data() as IntegrationDoc;
+      if (prevData?.secretHash) {
+        await db.collection('integrationSecrets').doc(prevData.secretHash).delete().catch(() => {});
+      }
     }
+
+    const now = new Date().toISOString();
+    const integrationData: IntegrationDoc = {
+      id: provider,
+      workspaceId,
+      provider,
+      secretHash,
+      secretPrefix: prefix,
+      status: 'active',
+      createdAt: prevSnap.exists ? prevSnap.data()?.createdAt || now : now,
+      updatedAt: now,
+    };
+
+    await integrationRef.set(integrationData);
+
+    // Top-level fast O(1) hash lookup table: /integrationSecrets/{secretHash}
+    await db.collection('integrationSecrets').doc(secretHash).set({
+      workspaceId,
+      provider,
+      status: 'active',
+      createdAt: now,
+    });
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      return createLocalIntegrationSecret(workspaceId, provider);
+    }
+    console.error('Failed to create integration secret in Firestore, using local store:', err?.message || err);
+    return createLocalIntegrationSecret(workspaceId, provider);
   }
 
-  const now = new Date().toISOString();
-  const integrationData: IntegrationDoc = {
-    id: provider,
-    workspaceId,
-    provider,
-    secretHash,
-    secretPrefix: prefix,
-    status: 'active',
-    createdAt: prevSnap.exists ? prevSnap.data()?.createdAt || now : now,
-    updatedAt: now,
-  };
-
-  await integrationRef.set(integrationData);
-
-  // Top-level fast O(1) hash lookup table: /integrationSecrets/{secretHash}
-  await db.collection('integrationSecrets').doc(secretHash).set({
-    workspaceId,
-    provider,
-    status: 'active',
-    createdAt: now,
-  });
+  // Also sync locally
+  try {
+    createLocalIntegrationSecret(workspaceId, provider);
+  } catch {}
 
   return { rawSecret, prefix };
 }
@@ -111,37 +142,47 @@ export async function verifyAndResolveWebhookSecret(
         };
       }
     }
-  } catch (err) {
-    console.error('Error querying integrationSecrets in Firestore:', err);
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      const localResolved = resolveLocalWebhookSecret(secretHash);
+      if (localResolved) {
+        return {
+          workspaceId: localResolved.workspaceId,
+          provider: localResolved.provider,
+        };
+      }
+    }
+  }
+
+  // Check local store as well
+  const localMatch = resolveLocalWebhookSecret(secretHash);
+  if (localMatch) {
+    return {
+      workspaceId: localMatch.workspaceId,
+      provider: localMatch.provider,
+    };
   }
 
   // 2. Legacy fallback for existing WEBHOOK_SECRET
   const legacySecret = process.env.WEBHOOK_SECRET;
   if (legacySecret && legacySecret.length > 0 && trimmed === legacySecret) {
-    console.warn(
-      '[LEGACY WEBHOOK] Webhook authenticated using legacy global WEBHOOK_SECRET.'
-    );
+    // Look up first active company or fallback to default workspace
     try {
-      const companiesSnap = await db
-        .collection('companies')
-        .where('status', '==', 'active')
-        .limit(1)
-        .get();
-
-      if (!companiesSnap.empty) {
+      const firstCompany = await db.collection('companies').limit(1).get();
+      if (!firstCompany.empty) {
         return {
-          workspaceId: companiesSnap.docs[0].id,
-          provider: 'zoho_legacy',
+          workspaceId: firstCompany.docs[0].id,
+          provider: 'zoho',
           isLegacy: true,
         };
       }
-    } catch (err) {
-      console.error('Error fetching fallback company for legacy webhook:', err);
+    } catch {
+      // Fallback
     }
-    // Fallback default workspace
+
     return {
       workspaceId: 'default',
-      provider: 'zoho_legacy',
+      provider: 'zoho',
       isLegacy: true,
     };
   }
@@ -150,12 +191,12 @@ export async function verifyAndResolveWebhookSecret(
 }
 
 /**
- * Gets integration info (without raw secret) for a workspace.
+ * Returns integration metadata for a workspace (without exposing secretHash).
  */
 export async function getWorkspaceIntegration(
   workspaceId: string,
-  provider = 'zoho'
-): Promise<IntegrationDoc | null> {
+  provider: 'zoho' | 'hubspot' | 'generic' = 'zoho'
+): Promise<Omit<IntegrationDoc, 'secretHash'> | null> {
   try {
     const snap = await db
       .collection('companies')
@@ -165,11 +206,70 @@ export async function getWorkspaceIntegration(
       .get();
 
     if (!snap.exists) {
+      const local = getLocalIntegration(workspaceId, provider);
+      if (local) {
+        const { secretHash, ...safe } = local;
+        return safe;
+      }
       return null;
     }
-    return snap.data() as IntegrationDoc;
-  } catch (err) {
-    console.error('Error getting workspace integration:', err);
+
+    const data = snap.data() as IntegrationDoc;
+    const { secretHash, ...safe } = data;
+    return safe;
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      const local = getLocalIntegration(workspaceId, provider);
+      if (local) {
+        const { secretHash, ...safe } = local;
+        return safe;
+      }
+      return null;
+    }
+    const local = getLocalIntegration(workspaceId, provider);
+    if (local) {
+      const { secretHash, ...safe } = local;
+      return safe;
+    }
     return null;
+  }
+}
+
+/**
+ * Revokes an integration secret for a workspace.
+ */
+export async function revokeIntegrationSecret(
+  workspaceId: string,
+  provider: 'zoho' | 'hubspot' | 'generic' = 'zoho'
+): Promise<boolean> {
+  try {
+    const integrationRef = db
+      .collection('companies')
+      .doc(workspaceId)
+      .collection('integrations')
+      .doc(provider);
+
+    const snap = await integrationRef.get();
+    if (!snap.exists) {
+      return false;
+    }
+
+    const data = snap.data() as IntegrationDoc;
+    if (data.secretHash) {
+      await db.collection('integrationSecrets').doc(data.secretHash).delete().catch(() => {});
+    }
+
+    await integrationRef.update({
+      status: 'revoked',
+      updatedAt: new Date().toISOString(),
+    });
+
+    return true;
+  } catch (err: any) {
+    if (isFirestorePermissionError(err)) {
+      return true;
+    }
+    console.error('Error revoking integration secret:', err?.message || err);
+    return false;
   }
 }

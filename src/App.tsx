@@ -44,6 +44,7 @@ export default function App() {
 
   // Fetch persistent leads from backend database
   const fetchLeads = async () => {
+    if (!auth.currentUser) return;
     try {
       setIsLoadingLeads(true);
       const res = await authFetch('/api/leads');
@@ -53,15 +54,27 @@ export default function App() {
           setLeads(json.data);
         }
       }
-    } catch (err) {
-      console.error('Failed to load persistent leads from /api/leads:', err);
+    } catch (err: any) {
+      if (err?.message !== 'User is not authenticated') {
+        console.warn('Could not load persistent leads from /api/leads:', err?.message || err);
+      }
     } finally {
       setIsLoadingLeads(false);
     }
   };
 
   useEffect(() => {
-    fetchLeads();
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        fetchLeads();
+      }
+    });
+
+    if (auth.currentUser) {
+      fetchLeads();
+    }
+
+    return () => unsubscribe();
   }, []);
 
   // Field change handler

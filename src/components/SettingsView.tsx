@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { LeadRecord, StoredLead } from '../types';
 import { authFetch } from '../utils/authFetch';
+import { auth } from '../firebase';
 
 interface SettingsViewProps {
   leads: (StoredLead | LeadRecord)[];
@@ -181,8 +182,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ leads }) => {
   };
 
   useEffect(() => {
-    fetchWorkspaceAndIntegration();
-    fetchIntakeLogs();
+    if (auth.currentUser) {
+      fetchWorkspaceAndIntegration();
+      fetchIntakeLogs();
+    }
+
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        fetchWorkspaceAndIntegration();
+        fetchIntakeLogs();
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleRotateSecret = async () => {
