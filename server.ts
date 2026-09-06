@@ -1,3 +1,4 @@
+import { getAuth } from "firebase-admin/auth";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -35,6 +36,32 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;;
 
 app.use(express.json({ limit: "5mb" }));
+async function verifyFirebaseToken(req: any, res: any, next: any) {
+  try {
+    const authHeader = req.headers.authorization || "";
+
+    if (!authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized.",
+      });
+    }
+
+    const token = authHeader.substring(7);
+
+    const decodedToken = await getAuth().verifyIdToken(token);
+
+    req.user = decodedToken;
+    next();
+  } catch (error: any) {
+    console.error("Firebase auth error:", error?.message || error);
+
+    return res.status(401).json({
+      success: false,
+      error: "Invalid or expired authentication token.",
+    });
+  }
+}
 
 // Health check endpoint
 app.get("/api/health", (_req, res) => {
@@ -45,7 +72,7 @@ app.get("/api/health", (_req, res) => {
  * GET /api/leads
  * Returns all saved leads in newest-first order
  */
-app.get("/api/leads", async (_req, res) => {
+app.get("/api/leads", verifyFirebaseToken, async (_req, res) => {
   try {
     const leads = await getAllLeads();
     return res.json({
@@ -66,7 +93,7 @@ app.get("/api/leads", async (_req, res) => {
  * GET /api/leads/:id
  * Returns a single saved lead by ID
  */
-app.get("/api/leads/:id", async (req, res) => {
+app.get("/api/leads/:id", verifyFirebaseToken, async (req, res) => {
   try {
     const { id } = req.params;
     const lead = await getLeadById(id);
@@ -93,7 +120,7 @@ app.get("/api/leads/:id", async (req, res) => {
  * DELETE /api/leads/:id
  * Removes a lead from persistent storage
  */
-app.delete("/api/leads/:id", async (req, res) => {
+app.delete("/api/leads/:id", verifyFirebaseToken, async (req, res) => {
   try {
     const { id } = req.params;
     const success = await deleteLead(id);
@@ -201,7 +228,7 @@ app.post("/api/leads/intake", (req, res) => {
  * Developer Tracing Endpoint: GET /api/leads/intake/logs
  * Returns recent intake trace events for observability and audit
  */
-app.get("/api/leads/intake/logs", (_req, res) => {
+app.get("/api/leads/intake/logs", verifyFirebaseToken, (_req, res) => {
   return res.json({
     success: true,
     logs: getIntakeLogs(50),
@@ -222,7 +249,7 @@ app.get("/api/leads/intake/logs", (_req, res) => {
  * Annual_Revenue -> budget
  * Description    -> message
  */
-app.post("/api/leads/analyze", async (req, res) => {
+app.post("/api/leads/analyze", verifyFirebaseToken, async (req, res) => {
   try {
     const body = req.body;
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -326,7 +353,7 @@ app.post("/api/leads/analyze", async (req, res) => {
  * Web Interface Endpoint: POST /api/analyze-lead
  * Uses the same Gemini analysis service for UI form submissions and persists lead.
  */
-app.post("/api/analyze-lead", async (req, res) => {
+app.post("/api/analyze-lead", verifyFirebaseToken, async (req, res) => {
   try {
     const normalized = normalizeLeadPayload(req.body);
 

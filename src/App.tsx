@@ -1,5 +1,23 @@
 import { signOut } from 'firebase/auth';
 import { auth } from './firebase';
+async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error('User is not authenticated');
+  }
+
+  const token = await user.getIdToken();
+
+  return fetch(input, {
+    ...init,
+    headers: {
+      ...(init.headers || {}),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 import React, { useState, useRef, useEffect } from 'react';
 import { NavTab, LeadFormData, LeadAnalysisResult, LeadRecord, GeminiLeadResponse, StoredLead } from './types';
 import { Sidebar } from './components/Sidebar';
@@ -45,7 +63,7 @@ export default function App() {
   const fetchLeads = async () => {
     try {
       setIsLoadingLeads(true);
-      const res = await fetch('/api/leads');
+      const res = await authFetch('/api/leads');
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
@@ -110,7 +128,7 @@ export default function App() {
     }
 
     try {
-      const response = await fetch('/api/analyze-lead', {
+      const response = await authFetch('/api/analyze-lead', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -218,7 +236,7 @@ export default function App() {
   // Delete lead from persistent storage
   const handleDeleteLead = async (id: string) => {
     try {
-      const res = await fetch(`/api/leads/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/leads/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setLeads((prev) => prev.filter((l) => l.id !== id));
       }
