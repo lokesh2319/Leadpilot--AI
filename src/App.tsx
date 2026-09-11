@@ -9,10 +9,12 @@ import { LeadForm } from './components/LeadForm';
 import { AnalysisResults } from './components/AnalysisResults';
 import { DashboardView } from './components/DashboardView';
 import { LeadsView } from './components/LeadsView';
+import { IntegrationsView } from './components/IntegrationsView';
 import { SettingsView } from './components/SettingsView';
 import { HelpModal } from './components/HelpModal';
+import { LeadDetailDrawer } from './components/LeadDetailDrawer';
 import { qualifyLead } from './utils/qualifyLead';
-import { SAMPLE_PRESETS } from './data/sampleLeads';
+import { SAMPLE_PRESETS, PORTFOLIO_DEMO_LEADS } from './data/sampleLeads';
 import { Menu, X } from 'lucide-react';
 
 const EMPTY_FORM: LeadFormData = {
@@ -26,7 +28,7 @@ const EMPTY_FORM: LeadFormData = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<NavTab>('analysis');
+  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [formData, setFormData] = useState<LeadFormData>(SAMPLE_PRESETS[0].data);
   const [analysisResult, setAnalysisResult] = useState<LeadAnalysisResult | null>(() => {
     return qualifyLead(SAMPLE_PRESETS[0].data);
@@ -39,6 +41,8 @@ export default function App() {
   const [isLoadingLeads, setIsLoadingLeads] = useState<boolean>(true);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const [activeDetailLead, setActiveDetailLead] = useState<StoredLead | null>(null);
 
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -52,6 +56,10 @@ export default function App() {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           setLeads(json.data);
+          // If no leads exist yet, default to demo mode so dashboard looks full and impressive for portfolio demo
+          if (json.data.length === 0) {
+            setIsDemoMode(true);
+          }
         }
       }
     } catch (err: any) {
@@ -64,131 +72,99 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (user) {
-        fetchLeads();
-      }
-    });
-
-    if (auth.currentUser) {
-      fetchLeads();
-    }
-
-    return () => unsubscribe();
+    fetchLeads();
   }, []);
 
-  // Field change handler
+  // Form field validation
+  const validateForm = (data: LeadFormData): boolean => {
+    const errors: Partial<Record<keyof LeadFormData, string>> = {};
+
+    if (!data.customerName.trim()) {
+      errors.customerName = 'Customer name is required';
+    }
+
+    if (!data.email.trim()) {
+      errors.email = 'Email address is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())) {
+      errors.email = 'Please enter a valid email address';
+    }
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleFieldChange = (field: keyof LeadFormData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     setIsSaved(false);
     if (validationErrors[field]) {
-      setValidationErrors((prev) => {
-        const copy = { ...prev };
-        delete copy[field];
-        return copy;
-      });
+      setValidationErrors((prev) => ({ ...prev, [field]: undefined }));
     }
   };
 
-  // Submit / "Analyze Lead" click - calls Gemini AI backend and auto-persists to DB
-  const handleAnalyzeLead = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-
-    // Client-side field validation
-    const errors: Partial<Record<keyof LeadFormData, string>> = {};
-    if (!formData.customerName.trim()) {
-      errors.customerName = 'Customer name is required.';
-    }
-    if (!formData.email.trim()) {
-      errors.email = 'Email address is required.';
-    } else if (!formData.email.includes('@')) {
-      errors.email = 'Please enter a valid email address.';
-    }
-    if (!formData.customerMessage.trim()) {
-      errors.customerMessage = 'Please provide customer enquiry or requirement details.';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      setValidationErrors(errors);
+  // Analyze lead with Gemini backend (with rule fallback)
+  const handleAnalyzeLead = async (dataToAnalyze: LeadFormData = formData) => {
+    if (!validateForm(dataToAnalyze)) {
       return;
     }
 
-    setValidationErrors({});
     setIsAnalyzing(true);
     setAnalysisError(null);
     setIsSaved(false);
 
-    // Auto-scroll on mobile devices
-    if (window.innerWidth < 1024 && resultsRef.current) {
-      resultsRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-
     try {
-      const response = await authFetch('/api/analyze-lead', {
+      const response = await authFetch('/api/leads/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          customerName: formData.customerName,
-          phoneNumber: formData.phoneNumber,
-          email: formData.email,
-          leadSource: formData.leadSource,
-          productInterest: formData.productInterest,
-          budget: formData.budget,
-          customerMessage: formData.customerMessage,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dataToAnalyze),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || `Analysis request failed with status ${response.status}`);
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server returned ${response.status}`);
       }
 
-      const ai = (data.data || data) as GeminiLeadResponse;
+      const result = await response.json();
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Invalid response from qualification server');
+      }
 
-      const formattedResult: LeadAnalysisResult = {
-        leadScore: typeof ai.lead_score === 'number' ? ai.lead_score : 75,
-        classification: (['Hot', 'Warm', 'Cold'].includes(ai.classification) ? ai.classification : 'Warm') as 'Hot' | 'Warm' | 'Cold',
-        purchaseIntent: ai.purchase_intent || 'Medium',
-        priority: (['Urgent', 'High', 'Medium', 'Low'].includes(ai.priority) ? ai.priority : 'Medium') as 'Urgent' | 'High' | 'Medium' | 'Low',
-        shortSummary: ai.summary || '',
-        recommendedNextAction: ai.recommended_action || '',
-        suggestedResponse: ai.suggested_response || '',
-        reasoning: Array.isArray(ai.reasoning) ? ai.reasoning : [],
+      const geminiData: GeminiLeadResponse = result.data;
+
+      setAnalysisResult({
+        classification: geminiData.classification,
+        leadScore: geminiData.lead_score,
+        purchaseIntent: geminiData.purchase_intent,
+        priority: geminiData.priority,
+        shortSummary: geminiData.summary,
+        reasoning: geminiData.reasoning,
+        recommendedNextAction: geminiData.recommended_action,
+        suggestedResponse: geminiData.suggested_response,
         timestamp: new Date().toISOString(),
-      };
-
-      setAnalysisResult(formattedResult);
-
-      // Server automatically saved lead into persistent database
-      if (data.lead) {
-        setLeads((prev) => [data.lead, ...prev.filter((l) => l.id !== data.lead.id)]);
-        setIsSaved(true);
-      }
+      });
     } catch (err: any) {
-      console.error('Error analyzing lead with Gemini AI:', err);
-      setAnalysisError(err.message || 'Failed to analyze lead with Gemini AI. Please retry.');
+      console.warn('Gemini qualification unavailable, using deterministic rule engine fallback:', err?.message);
+      const fallbackResult = qualifyLead(dataToAnalyze);
+      setAnalysisResult(fallbackResult);
+      setAnalysisError(
+        'Gemini API request failed; deterministic rule engine was used instead.'
+      );
     } finally {
       setIsAnalyzing(false);
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
     }
   };
 
-  // Preset selector
   const handleSelectPreset = (index: number) => {
     const preset = SAMPLE_PRESETS[index];
     if (!preset) return;
     setFormData(preset.data);
     setValidationErrors({});
-    setAnalysisError(null);
     setIsSaved(false);
-    // Instant qualification preview for chosen preset
-    const result = qualifyLead(preset.data);
-    setAnalysisResult(result);
+    handleAnalyzeLead(preset.data);
   };
 
-  // Clear form
   const handleClearForm = () => {
     setFormData(EMPTY_FORM);
     setAnalysisResult(null);
@@ -197,39 +173,77 @@ export default function App() {
     setIsSaved(false);
   };
 
-  // Save qualified lead to pipeline (if user wants to re-save or update)
+  // Save qualified lead to backend persistent pipeline
   const handleSaveToPipeline = async () => {
     if (!analysisResult) return;
-    setIsSaved(true);
+
+    try {
+      const payload: Omit<StoredLead, 'id' | 'created_at'> = {
+        customer_name: formData.customerName,
+        phone: formData.phoneNumber,
+        email: formData.email,
+        lead_source: formData.leadSource,
+        product_service: formData.productInterest,
+        budget: formData.budget,
+        message: formData.customerMessage,
+        classification: analysisResult.classification,
+        lead_score: analysisResult.leadScore,
+        purchase_intent: (analysisResult.purchaseIntent as 'High' | 'Medium' | 'Low') || 'Medium',
+        priority: analysisResult.priority,
+        summary: analysisResult.shortSummary,
+        reasoning: analysisResult.reasoning || [],
+        recommended_action: analysisResult.recommendedNextAction,
+        suggested_response: analysisResult.suggestedResponse,
+      };
+
+      const res = await authFetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setIsSaved(true);
+        // Refresh leads list
+        await fetchLeads();
+      } else {
+        const json = await res.json().catch(() => ({}));
+        alert(`Failed to save lead: ${json.error || 'Server error'}`);
+      }
+    } catch (err: any) {
+      console.error('Error saving lead:', err);
+      alert('Error saving lead to database');
+    }
   };
 
-  // Select lead from dashboard or leads view to view/inspect in AI Analysis
-  const handleSelectLeadForWorkspace = (lead: StoredLead) => {
+  // Pre-load a stored lead into the AI Analysis form
+  const handleSelectLeadForWorkspace = (storedLead: StoredLead) => {
     setFormData({
-      customerName: lead.customer_name,
-      phoneNumber: lead.phone,
-      email: lead.email,
-      leadSource: lead.lead_source,
-      productInterest: lead.product_service,
-      budget: lead.budget,
-      customerMessage: lead.message,
+      customerName: storedLead.customer_name || '',
+      phoneNumber: storedLead.phone || '',
+      email: storedLead.email || '',
+      leadSource: storedLead.lead_source || 'Website Inbound',
+      productInterest: storedLead.product_service || 'Enterprise Lead Automation Platform',
+      budget: storedLead.budget || '',
+      customerMessage: storedLead.message || '',
     });
+
     setAnalysisResult({
-      leadScore: lead.lead_score,
-      classification: lead.classification,
-      purchaseIntent: lead.purchase_intent,
-      priority: lead.priority,
-      shortSummary: lead.summary,
-      recommendedNextAction: lead.recommended_action,
-      suggestedResponse: lead.suggested_response,
-      reasoning: lead.reasoning,
-      timestamp: lead.created_at,
+      classification: storedLead.classification,
+      leadScore: storedLead.lead_score,
+      purchaseIntent: storedLead.purchase_intent,
+      priority: storedLead.priority,
+      shortSummary: storedLead.summary,
+      reasoning: storedLead.reasoning || [],
+      recommendedNextAction: storedLead.recommended_action,
+      suggestedResponse: storedLead.suggested_response,
+      timestamp: new Date().toISOString(),
     });
+
     setIsSaved(true);
     setActiveTab('analysis');
   };
 
-  // Delete lead from persistent storage
   const handleDeleteLead = async (id: string) => {
     try {
       const res = await authFetch(`/api/leads/${id}`, { method: 'DELETE' });
@@ -241,18 +255,26 @@ export default function App() {
     }
   };
 
+  // Active leads passed to components: if demo mode is enabled, display demo leads; else display actual Firestore leads
+  const activeLeads = isDemoMode ? PORTFOLIO_DEMO_LEADS : leads;
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans">
-      {/* Mobile Top Navigation Bar */}
-      <div className="md:hidden bg-slate-900 text-white px-4 py-3 flex items-center justify-between border-b border-slate-800">
+    <div className="flex h-screen bg-slate-100 font-sans antialiased overflow-hidden">
+      {/* Mobile Sidebar Overlay */}
+      {isMobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 z-30 md:hidden"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* Mobile Top Header */}
+      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-slate-900 text-white z-20 flex items-center justify-between px-4">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white text-sm">
+          <div className="w-7 h-7 bg-blue-500 rounded flex items-center justify-center font-bold text-xs">
             LP
           </div>
-          <div>
-            <span className="font-bold text-sm">LeadPilot AI</span>
-            <span className="text-[10px] ml-1 bg-blue-500/30 text-blue-300 px-1 rounded">CRM</span>
-          </div>
+          <span className="font-semibold text-sm">LeadPilot AI</span>
         </div>
         <button
           type="button"
@@ -264,53 +286,54 @@ export default function App() {
       </div>
 
       {/* Desktop & Mobile Drawer Sidebar */}
-      <div className={`${isMobileSidebarOpen ? 'block' : 'hidden'} md:block shrink-0`}>
+      <div className={`${isMobileSidebarOpen ? 'block' : 'hidden'} md:block shrink-0 h-full`}>
         <Sidebar
           activeTab={activeTab}
           onTabChange={(tab) => {
             setActiveTab(tab);
             setIsMobileSidebarOpen(false);
           }}
-          leadsCount={leads.length}
+          leadsCount={activeLeads.length}
         />
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
-         <div className="flex justify-end px-4 pt-4 md:px-6">
-    <button
-	    type="button"
-    onClick={async () => {
-      try {
-        await signOut(auth);
-        console.log('Logged out successfully');
-      } catch (error) {
-        console.error('Logout error:', error);
-      }
-    }}
-    className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-700"
-  >
-
-
-
-
-
-
-
-
-
-
-      Logout
-    </button>
-  </div>
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden pt-14 md:pt-0">
         <Header
           activeTab={activeTab}
           onSelectPreset={handleSelectPreset}
           onClearForm={handleClearForm}
           onOpenHelp={() => setIsHelpOpen(true)}
+          isDemoMode={isDemoMode}
+          onToggleDemoMode={setIsDemoMode}
+          userEmail={auth.currentUser?.email}
         />
 
-        <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {activeTab === 'dashboard' && (
+            <DashboardView
+              leads={activeLeads}
+              onNavigate={setActiveTab}
+              onSelectLead={handleSelectLeadForWorkspace}
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={setIsDemoMode}
+              onViewLeadDetails={setActiveDetailLead}
+            />
+          )}
+
+          {activeTab === 'leads' && (
+            <LeadsView
+              leads={activeLeads}
+              isLoading={isLoadingLeads}
+              onRefresh={fetchLeads}
+              onNavigate={setActiveTab}
+              onSelectLeadForWorkspace={handleSelectLeadForWorkspace}
+              onDeleteLead={handleDeleteLead}
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={setIsDemoMode}
+            />
+          )}
+
           {activeTab === 'analysis' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* Left Column: Intake Form (5 cols on lg) */}
@@ -340,23 +363,8 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'dashboard' && (
-            <DashboardView
-              leads={leads}
-              onNavigate={setActiveTab}
-              onSelectLead={handleSelectLeadForWorkspace}
-            />
-          )}
-
-          {activeTab === 'leads' && (
-            <LeadsView
-              leads={leads}
-              isLoading={isLoadingLeads}
-              onRefresh={fetchLeads}
-              onNavigate={setActiveTab}
-              onSelectLeadForWorkspace={handleSelectLeadForWorkspace}
-              onDeleteLead={handleDeleteLead}
-            />
+          {activeTab === 'integrations' && (
+            <IntegrationsView />
           )}
 
           {activeTab === 'settings' && (
@@ -365,9 +373,19 @@ export default function App() {
         </main>
       </div>
 
+      {/* Slide-over Lead Detail Experience (accessible from anywhere) */}
+      {activeDetailLead && (
+        <LeadDetailDrawer
+          lead={activeDetailLead}
+          onClose={() => setActiveDetailLead(null)}
+          onNavigate={setActiveTab}
+          onSelectLeadForWorkspace={handleSelectLeadForWorkspace}
+          onDeleteLead={handleDeleteLead}
+        />
+      )}
+
       {/* Help Modal */}
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }
-

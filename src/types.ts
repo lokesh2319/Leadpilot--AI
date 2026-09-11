@@ -1,4 +1,4 @@
-export type NavTab = 'dashboard' | 'leads' | 'analysis' | 'settings';
+export type NavTab = 'dashboard' | 'leads' | 'analysis' | 'integrations' | 'settings';
 
 export type LeadSource = 
   | 'Website Inbound'

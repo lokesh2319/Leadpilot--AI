@@ -1,25 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Search, 
   Plus, 
-  Trash2, 
+  RotateCw, 
   Sparkles, 
   Clock, 
-  X, 
-  Copy, 
-  Check, 
-  Phone, 
-  Mail, 
-  RotateCw, 
-  ChevronRight, 
-  ArrowUpRight, 
+  Eye, 
+  Filter, 
   Building2, 
-  Tag, 
-  DollarSign, 
-  MessageSquare,
-  AlertCircle
+  ArrowUpDown, 
+  Layers, 
+  Flame, 
+  TrendingUp, 
+  AlertCircle,
+  Check,
+  ChevronRight,
+  Download
 } from 'lucide-react';
-import { StoredLead, NavTab, LeadRecord } from '../types';
+import { StoredLead, NavTab } from '../types';
+import { LeadDetailDrawer } from './LeadDetailDrawer';
 
 interface LeadsViewProps {
   leads: StoredLead[];
@@ -28,6 +27,8 @@ interface LeadsViewProps {
   onNavigate: (tab: NavTab) => void;
   onSelectLeadForWorkspace?: (lead: StoredLead) => void;
   onDeleteLead?: (id: string) => void;
+  isDemoMode?: boolean;
+  onToggleDemoMode?: (enabled: boolean) => void;
 }
 
 export const LeadsView: React.FC<LeadsViewProps> = ({
@@ -37,33 +38,63 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   onNavigate,
   onSelectLeadForWorkspace,
   onDeleteLead,
+  isDemoMode = false,
+  onToggleDemoMode,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterClass, setFilterClass] = useState<'All' | 'Hot' | 'Warm' | 'Cold'>('All');
-  const [selectedLead, setSelectedLead] = useState<StoredLead | null>(null);
-  const [copiedResponse, setCopiedResponse] = useState(false);
+  const [classificationFilter, setClassificationFilter] = useState<'All' | 'Hot' | 'Warm' | 'Cold'>('All');
+  const [priorityFilter, setPriorityFilter] = useState<'All' | 'Urgent' | 'High' | 'Medium' | 'Low'>('All');
+  const [sourceFilter, setSourceFilter] = useState<string>('All');
+  const [sortBy, setSortBy] = useState<'newest' | 'score' | 'name'>('newest');
+  const [activeLead, setActiveLead] = useState<StoredLead | null>(null);
 
-  // Filter leads based on search term and classification
-  const filteredLeads = leads.filter((lead) => {
-    const term = searchTerm.toLowerCase();
-    const matchesSearch =
-      (lead.customer_name || '').toLowerCase().includes(term) ||
-      (lead.email || '').toLowerCase().includes(term) ||
-      (lead.product_service || '').toLowerCase().includes(term) ||
-      (lead.lead_source || '').toLowerCase().includes(term) ||
-      (lead.message || '').toLowerCase().includes(term);
+  // Available sources from current leads list
+  const availableSources = useMemo(() => {
+    const set = new Set<string>();
+    leads.forEach((l) => {
+      if (l.lead_source) set.add(l.lead_source);
+    });
+    return Array.from(set);
+  }, [leads]);
 
-    const matchesClass =
-      filterClass === 'All' || lead.classification === filterClass;
+  // Filter and sort leads
+  const filteredAndSortedLeads = useMemo(() => {
+    let result = leads.filter((lead) => {
+      const term = searchTerm.toLowerCase().trim();
+      const matchesSearch =
+        !term ||
+        (lead.customer_name || '').toLowerCase().includes(term) ||
+        (lead.email || '').toLowerCase().includes(term) ||
+        (lead.phone || '').toLowerCase().includes(term) ||
+        (lead.product_service || '').toLowerCase().includes(term) ||
+        (lead.lead_source || '').toLowerCase().includes(term) ||
+        (lead.message || '').toLowerCase().includes(term);
 
-    return matchesSearch && matchesClass;
-  });
+      const matchesClass =
+        classificationFilter === 'All' || lead.classification === classificationFilter;
 
-  const handleCopyResponse = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedResponse(true);
-    setTimeout(() => setCopiedResponse(false), 2000);
-  };
+      const matchesPriority =
+        priorityFilter === 'All' || lead.priority === priorityFilter;
+
+      const matchesSource =
+        sourceFilter === 'All' || lead.lead_source === sourceFilter;
+
+      return matchesSearch && matchesClass && matchesPriority && matchesSource;
+    });
+
+    result.sort((a, b) => {
+      if (sortBy === 'score') {
+        return (b.lead_score || 0) - (a.lead_score || 0);
+      }
+      if (sortBy === 'name') {
+        return (a.customer_name || '').localeCompare(b.customer_name || '');
+      }
+      // default: newest
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+
+    return result;
+  }, [leads, searchTerm, classificationFilter, priorityFilter, sourceFilter, sortBy]);
 
   const formatDate = (isoString: string) => {
     try {
@@ -72,88 +103,195 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         month: 'short',
         day: 'numeric',
         year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
       });
     } catch {
-      return isoString || 'Recently';
+      return 'Recent';
     }
   };
 
+  // Export filtered leads to JSON
+  const handleExportJson = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(filteredAndSortedLeads, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `leadpilot-leads-${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
   return (
-    <div className="space-y-4">
-      {/* Top Controls & Metrics Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          {/* Search Input */}
+    <div id="leads-view-container" className="space-y-4">
+      {/* Demo Mode Notice */}
+      {isDemoMode && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+            <span><strong>Showcase Portfolio Mode:</strong> Displaying representative B2B leads. Tenant Firestore data is untouched.</span>
+          </div>
+          {onToggleDemoMode && (
+            <button
+              type="button"
+              onClick={() => onToggleDemoMode(false)}
+              className="px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-900 font-semibold rounded-md border border-amber-300 transition-colors cursor-pointer shrink-0"
+            >
+              Switch to Live Leads
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Top Controls: Search, Filters & Actions */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+          {/* Search Bar */}
           <div className="relative flex-1 max-w-md">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
               id="input-leads-search"
-              placeholder="Search leads by customer, email, source, product..."
+              placeholder="Search by customer, email, phone, product..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+              className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
             />
           </div>
 
-          {/* Classification Filter Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto">
-            {(['All', 'Hot', 'Warm', 'Cold'] as const).map((filter) => (
+          {/* Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+            {onToggleDemoMode && (
               <button
-                key={filter}
                 type="button"
-                id={`btn-filter-${filter.toLowerCase()}`}
-                onClick={() => setFilterClass(filter)}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                  filterClass === filter
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-500 hover:text-slate-900'
+                id="btn-toggle-demo-leads"
+                onClick={() => onToggleDemoMode(!isDemoMode)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  isDemoMode
+                    ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
                 }`}
               >
-                {filter}
+                <Layers className="w-3.5 h-3.5" />
+                <span>{isDemoMode ? 'Showcase (On)' : 'Demo Leads'}</span>
               </button>
-            ))}
+            )}
+
+            <button
+              type="button"
+              id="btn-export-leads-json"
+              onClick={handleExportJson}
+              disabled={filteredAndSortedLeads.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export JSON</span>
+            </button>
+
+            <button
+              type="button"
+              id="btn-refresh-leads"
+              onClick={onRefresh}
+              disabled={isLoading}
+              title="Refresh leads from database"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+
+            <button
+              type="button"
+              id="btn-leads-view-new-qualify"
+              onClick={() => onNavigate('analysis')}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-all cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Qualify New Lead</span>
+            </button>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2 self-end md:self-auto">
-          <button
-            type="button"
-            id="btn-refresh-leads"
-            onClick={onRefresh}
-            disabled={isLoading}
-            title="Refresh leads from database"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60"
-          >
-            <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Refresh</span>
-          </button>
+        {/* Filter Badges Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Classification Filters */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+              {(['All', 'Hot', 'Warm', 'Cold'] as const).map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  id={`filter-cat-${cat.toLowerCase()}`}
+                  onClick={() => setClassificationFilter(cat)}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                    classificationFilter === cat
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
 
-          <button
-            type="button"
-            id="btn-leads-view-new-qualify"
-            onClick={() => onNavigate('analysis')}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-all cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Qualify New Lead</span>
-          </button>
+            {/* Priority Filter */}
+            <select
+              id="select-filter-priority"
+              value={priorityFilter}
+              onChange={(e) => setPriorityFilter(e.target.value as any)}
+              className="text-xs bg-slate-50 text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="All">All Priorities</option>
+              <option value="Urgent">Urgent Priority</option>
+              <option value="High">High Priority</option>
+              <option value="Medium">Medium Priority</option>
+              <option value="Low">Low Priority</option>
+            </select>
+
+            {/* Source Filter */}
+            {availableSources.length > 0 && (
+              <select
+                id="select-filter-source"
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+                className="text-xs bg-slate-50 text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="All">All Sources</option>
+                {availableSources.map((src) => (
+                  <option key={src} value={src}>{src}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Sort Control */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-[11px]">Sort:</span>
+            <select
+              id="select-sort-leads"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="text-xs bg-white text-slate-700 border border-slate-200 rounded-md px-2 py-1 focus:outline-none cursor-pointer"
+            >
+              <option value="newest">Newest First</option>
+              <option value="score">Highest AI Score</option>
+              <option value="name">Customer Name</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* CRM Leads Table Card */}
+      {/* CRM Leads Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-800">Saved Lead Pipeline</span>
-            <span className="text-[11px] bg-slate-200/80 text-slate-700 font-semibold px-2 py-0.5 rounded-full">
-              {filteredLeads.length} {filteredLeads.length === 1 ? 'Lead' : 'Leads'}
+            <span className="text-xs font-bold text-slate-800">Lead Pipeline Repository</span>
+            <span className="text-[11px] bg-slate-200 text-slate-700 font-semibold px-2 py-0.5 rounded-full">
+              {filteredAndSortedLeads.length} {filteredAndSortedLeads.length === 1 ? 'Record' : 'Records'}
             </span>
           </div>
-          <span className="text-[11px] text-slate-400">Click any row to open the full AI analysis</span>
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            Click any row or "View Details" to inspect full AI analysis & copy response
+          </span>
         </div>
 
         <div className="overflow-x-auto">
@@ -161,362 +299,224 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider text-[10px]">
                 <th className="py-3 px-4">Customer</th>
-                <th className="py-3 px-4">Lead Source</th>
-                <th className="py-3 px-4">Product/Service</th>
-                <th className="py-3 px-4 text-center">Score</th>
+                <th className="py-3 px-4">Source</th>
+                <th className="py-3 px-4">Product / Service</th>
+                <th className="py-3 px-4 text-center">AI Score</th>
                 <th className="py-3 px-4 text-center">Classification</th>
+                <th className="py-3 px-4 text-center">Purchase Intent</th>
                 <th className="py-3 px-4 text-center">Priority</th>
-                <th className="py-3 px-4 text-right">Created At</th>
+                <th className="py-3 px-4">Created Date</th>
+                <th className="py-3 px-4 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredLeads.length === 0 ? (
+              {isLoading ? (
+                // Loading Skeleton Rows
+                [1, 2, 3, 4].map((n) => (
+                  <tr key={n} className="animate-pulse">
+                    <td className="py-4 px-4">
+                      <div className="h-3.5 bg-slate-200 rounded w-28 mb-1.5" />
+                      <div className="h-2.5 bg-slate-100 rounded w-36" />
+                    </td>
+                    <td className="py-4 px-4"><div className="h-3 bg-slate-200 rounded w-20" /></td>
+                    <td className="py-4 px-4"><div className="h-3 bg-slate-200 rounded w-24" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-5 bg-slate-200 rounded w-10 mx-auto" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-5 bg-slate-200 rounded w-14 mx-auto" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                    <td className="py-4 px-4"><div className="h-3 bg-slate-200 rounded w-16" /></td>
+                    <td className="py-4 px-4 text-right"><div className="h-6 bg-slate-200 rounded w-16 ml-auto" /></td>
+                  </tr>
+                ))
+              ) : filteredAndSortedLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-14 text-center text-slate-400">
+                  <td colSpan={9} className="py-14 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Building2 className="w-8 h-8 text-slate-300" />
-                      <p className="text-xs font-medium text-slate-500">No leads found</p>
+                      <p className="text-xs font-medium text-slate-600">No leads found</p>
                       <p className="text-[11px] text-slate-400 max-w-sm">
-                        No leads match your current search or filter. Qualify a new lead or send sample JSON to POST /api/leads/analyze.
+                        {leads.length === 0
+                          ? "You haven't saved any leads in this workspace yet. Qualify a new inbound lead or toggle showcase demo leads for portfolio presentation."
+                          : "No leads match the active search and filter criteria."}
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => onNavigate('analysis')}
-                        className="mt-2 text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
-                      >
-                        Qualify a lead now &rarr;
-                      </button>
+                      <div className="flex items-center gap-2 mt-2">
+                        {onToggleDemoMode && leads.length === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleDemoMode(true)}
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                          >
+                            Load Demo Leads
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onNavigate('analysis')}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                        >
+                          Qualify New Lead
+                        </button>
+                      </div>
                     </div>
                   </td>
                 </tr>
               ) : (
-                filteredLeads.map((lead) => (
-                  <tr
-                    key={lead.id}
-                    id={`lead-row-${lead.id}`}
-                    onClick={() => setSelectedLead(lead)}
-                    className="hover:bg-blue-50/40 cursor-pointer transition-colors group select-none"
-                  >
-                    {/* Customer */}
-                    <td className="py-3.5 px-4">
-                      <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                        {lead.customer_name}
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
-                        <span className="truncate max-w-[140px]">{lead.email}</span>
-                        {lead.phone && (
-                          <>
-                            <span className="text-slate-300">&bull;</span>
-                            <span className="text-slate-400">{lead.phone}</span>
-                          </>
-                        )}
-                      </div>
-                    </td>
+                filteredAndSortedLeads.map((lead) => {
+                  const isHot = lead.classification === 'Hot';
+                  const isWarm = lead.classification === 'Warm';
 
-                    {/* Lead Source */}
-                    <td className="py-3.5 px-4">
-                      <span className="inline-block text-[11px] font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200/60">
-                        {lead.lead_source || 'Website'}
-                      </span>
-                    </td>
-
-                    {/* Product/Service */}
-                    <td className="py-3.5 px-4">
-                      <div className="font-medium text-slate-800 max-w-[180px] truncate">
-                        {lead.product_service || 'General'}
-                      </div>
-                      {lead.budget && (
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          Budget: {lead.budget}
+                  return (
+                    <tr
+                      key={lead.id}
+                      id={`lead-table-row-${lead.id}`}
+                      onClick={() => setActiveLead(lead)}
+                      className="hover:bg-blue-50/40 cursor-pointer transition-colors group select-none"
+                    >
+                      {/* Customer */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shrink-0 ${
+                            isHot
+                              ? 'bg-emerald-600 text-white'
+                              : isWarm
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-slate-700 text-white'
+                          }`}>
+                            {(lead.customer_name || 'LP').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                              {lead.customer_name}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-0.5">
+                              <span className="truncate max-w-[130px]">{lead.email}</span>
+                              {lead.phone && (
+                                <>
+                                  <span className="text-slate-300">&bull;</span>
+                                  <span className="text-slate-400 font-mono text-[10px]">{lead.phone}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </td>
+                      </td>
 
-                    {/* Score */}
-                    <td className="py-3.5 px-4 text-center">
-                      <span
-                        className={`inline-block font-mono font-bold text-xs px-2.5 py-0.5 rounded ${
-                          lead.lead_score >= 80
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                            : lead.lead_score >= 55
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200/60'
-                            : 'bg-slate-100 text-slate-600 border border-slate-200'
-                        }`}
-                      >
-                        {lead.lead_score}
-                      </span>
-                    </td>
+                      {/* Source */}
+                      <td className="py-3.5 px-4">
+                        <span className="inline-block text-[11px] font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200/70">
+                          {lead.lead_source || 'Inbound'}
+                        </span>
+                      </td>
 
-                    {/* Classification */}
-                    <td className="py-3.5 px-4 text-center">
-                      <span
-                        className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                          lead.classification === 'Hot'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : lead.classification === 'Warm'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {lead.classification}
-                      </span>
-                    </td>
+                      {/* Product / Service */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-medium text-slate-800 max-w-[160px] truncate">
+                          {lead.product_service || 'General Inbound'}
+                        </div>
+                        {lead.budget && (
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                            Budget: <span className="font-semibold text-slate-700">{lead.budget}</span>
+                          </div>
+                        )}
+                      </td>
 
-                    {/* Priority */}
-                    <td className="py-3.5 px-4 text-center">
-                      <span
-                        className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded ${
-                          lead.priority === 'Urgent'
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200/60'
-                            : lead.priority === 'High'
-                            ? 'bg-orange-50 text-orange-700 border border-orange-200/60'
-                            : 'bg-slate-100 text-slate-600 border border-slate-200/60'
-                        }`}
-                      >
-                        {lead.priority}
-                      </span>
-                    </td>
+                      {/* AI Score */}
+                      <td className="py-3.5 px-4 text-center">
+                        <span
+                          className={`inline-block font-mono font-bold text-xs px-2.5 py-0.5 rounded ${
+                            lead.lead_score >= 80
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : lead.lead_score >= 50
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-slate-100 text-slate-600 border border-slate-200'
+                          }`}
+                        >
+                          {lead.lead_score}
+                        </span>
+                      </td>
 
-                    {/* Created At */}
-                    <td className="py-3.5 px-4 text-right text-slate-500 whitespace-nowrap text-[11px] font-mono">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Clock className="w-3 h-3 text-slate-400" />
-                        <span>{formatDate(lead.created_at)}</span>
-                        <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-500 transition-transform group-hover:translate-x-0.5 ml-1" />
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      {/* Classification */}
+                      <td className="py-3.5 px-4 text-center">
+                        <span
+                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            isHot
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : isWarm
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {lead.classification}
+                        </span>
+                      </td>
+
+                      {/* Purchase Intent */}
+                      <td className="py-3.5 px-4 text-center">
+                        <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded ${
+                          lead.purchase_intent === 'High'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {lead.purchase_intent || 'Medium'}
+                        </span>
+                      </td>
+
+                      {/* Priority */}
+                      <td className="py-3.5 px-4 text-center">
+                        <span
+                          className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded ${
+                            lead.priority === 'Urgent'
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : lead.priority === 'High'
+                              ? 'bg-orange-50 text-orange-700 border border-orange-200'
+                              : 'bg-slate-100 text-slate-600 border border-slate-200/70'
+                          }`}
+                        >
+                          {lead.priority}
+                        </span>
+                      </td>
+
+                      {/* Created Date */}
+                      <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap text-[11px] font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span>{formatDate(lead.created_at)}</span>
+                        </div>
+                      </td>
+
+                      {/* Action: View Details */}
+                      <td className="py-3.5 px-4 text-right">
+                        <button
+                          type="button"
+                          id={`btn-view-details-${lead.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveLead(lead);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-blue-600 hover:text-white rounded-lg transition-all cursor-pointer"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>Details</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Full AI Analysis Modal / Slide-Over */}
-      {selectedLead && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
-          onClick={() => setSelectedLead(null)}
-        >
-          <div
-            className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden text-slate-900 text-xs"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-slate-900">
-                    {selectedLead.customer_name}
-                  </h3>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                      selectedLead.classification === 'Hot'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : selectedLead.classification === 'Warm'
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    {selectedLead.classification}
-                  </span>
-                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-800">
-                    Score: {selectedLead.lead_score}/100
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1.5">
-                  <span className="flex items-center gap-1">
-                    <Mail className="w-3 h-3 text-slate-400" />
-                    {selectedLead.email}
-                  </span>
-                  {selectedLead.phone && (
-                    <span className="flex items-center gap-1">
-                      <Phone className="w-3 h-3 text-slate-400" />
-                      {selectedLead.phone}
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-slate-400" />
-                    {formatDate(selectedLead.created_at)}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                id="btn-close-lead-analysis-modal"
-                onClick={() => setSelectedLead(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Scrollable Body */}
-            <div className="p-6 overflow-y-auto space-y-5">
-              {/* Lead Metrics Strip */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Lead Score</span>
-                  <span className="text-lg font-bold font-mono text-slate-900 block mt-0.5">{selectedLead.lead_score} / 100</span>
-                </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Classification</span>
-                  <span className="text-lg font-bold text-slate-900 block mt-0.5">{selectedLead.classification}</span>
-                </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Purchase Intent</span>
-                  <span className="text-lg font-bold text-slate-900 block mt-0.5">{selectedLead.purchase_intent}</span>
-                </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Priority</span>
-                  <span className="text-lg font-bold text-slate-900 block mt-0.5">{selectedLead.priority}</span>
-                </div>
-              </div>
-
-              {/* Inquiry Metadata */}
-              <div className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/50 space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase">Product Interest</span>
-                    <p className="font-semibold text-slate-800 mt-0.5">{selectedLead.product_service}</p>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase">Lead Source</span>
-                    <p className="font-semibold text-slate-800 mt-0.5">{selectedLead.lead_source}</p>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase">Allocated Budget</span>
-                    <p className="font-semibold text-slate-800 mt-0.5">{selectedLead.budget || 'Not specified'}</p>
-                  </div>
-                </div>
-
-                {selectedLead.message && (
-                  <div className="pt-2 border-t border-slate-200/70">
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">Customer Enquiry:</span>
-                    <p className="text-xs text-slate-700 italic bg-white p-2.5 rounded border border-slate-200">
-                      "{selectedLead.message}"
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Lead Summary */}
-              <div>
-                <h4 className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span>AI Lead Summary</span>
-                </h4>
-                <p className="text-slate-700 bg-blue-50/40 p-3 rounded-lg border border-blue-100/80 leading-relaxed">
-                  {selectedLead.summary || 'Summary pending.'}
-                </p>
-              </div>
-
-              {/* Recommended Next Action */}
-              <div>
-                <h4 className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Recommended Next Action for Sales</span>
-                </h4>
-                <p className="text-slate-700 bg-emerald-50/40 p-3 rounded-lg border border-emerald-100/80 leading-relaxed font-medium">
-                  {selectedLead.recommended_action || 'Action pending.'}
-                </p>
-              </div>
-
-              {/* Suggested Customer Response */}
-              {selectedLead.suggested_response && (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
-                      <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Suggested Customer Response</span>
-                    </h4>
-                    <button
-                      type="button"
-                      id="btn-modal-copy-response"
-                      onClick={() => handleCopyResponse(selectedLead.suggested_response)}
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-blue-600 cursor-pointer"
-                    >
-                      {copiedResponse ? (
-                        <>
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          <span className="text-emerald-600">Copied to Clipboard!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          <span>Copy Response</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-900 text-slate-100 font-sans text-xs leading-relaxed whitespace-pre-line border border-slate-800">
-                    {selectedLead.suggested_response}
-                  </div>
-                </div>
-              )}
-
-              {/* Reasoning Points */}
-              {selectedLead.reasoning && selectedLead.reasoning.length > 0 && (
-                <div>
-                  <h4 className="font-bold text-slate-900 mb-1.5">Key Qualification Drivers</h4>
-                  <ul className="space-y-1.5">
-                    {selectedLead.reasoning.map((reason, i) => (
-                      <li key={i} className="flex items-start gap-2 text-slate-600">
-                        <span className="text-blue-600 font-bold mt-0.5">&bull;</span>
-                        <span>{reason}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
-              {onDeleteLead ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (confirm(`Delete lead record for ${selectedLead.customer_name}?`)) {
-                      onDeleteLead(selectedLead.id);
-                      setSelectedLead(null);
-                    }
-                  }}
-                  className="inline-flex items-center gap-1 text-slate-500 hover:text-rose-600 text-xs font-semibold px-2 py-1.5 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete Lead</span>
-                </button>
-              ) : <div />}
-
-              <div className="flex items-center gap-2">
-                {onSelectLeadForWorkspace && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSelectLeadForWorkspace(selectedLead);
-                      setSelectedLead(null);
-                      onNavigate('analysis');
-                    }}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                  >
-                    <span>Open in AI Workspace</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setSelectedLead(null)}
-                  className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Slide-Over Drawer for Lead Detail Experience */}
+      {activeLead && (
+        <LeadDetailDrawer
+          lead={activeLead}
+          onClose={() => setActiveLead(null)}
+          onNavigate={onNavigate}
+          onSelectLeadForWorkspace={onSelectLeadForWorkspace}
+          onDeleteLead={onDeleteLead}
+        />
       )}
     </div>
   );

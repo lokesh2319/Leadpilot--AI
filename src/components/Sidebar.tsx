@@ -3,6 +3,7 @@ import {
   LayoutDashboard, 
   Users, 
   Sparkles, 
+  Webhook,
   Settings, 
   ChevronRight,
   ShieldCheck
@@ -20,6 +21,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, leadsC
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'leads', label: 'Leads', icon: Users, badge: leadsCount },
     { id: 'analysis', label: 'AI Analysis', icon: Sparkles },
+    { id: 'integrations', label: 'Integrations', icon: Webhook },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
